@@ -12,6 +12,15 @@ import { exec } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
+const RSS_TIMEOUT_MS = Math.max(4000, parseInt(process.env.RSS_TIMEOUT_MS || '15000', 10) || 15000);
+const RSS_RETRIES = Math.max(0, parseInt(process.env.RSS_RETRIES || '2', 10) || 2);
+const RSS_CACHE_TTL_MS = Math.max(60000, parseInt(process.env.RSS_CACHE_TTL_MS || '5400000', 10) || 5400000);
+const RSS_ENABLE_CN_FEEDS = !/^(0|false|off|no)$/i.test(String(process.env.RSS_ENABLE_CN_FEEDS || 'true'));
+const RSS_ENABLE_RSSHUB_FEEDS = !/^(0|false|off|no)$/i.test(String(process.env.RSS_ENABLE_RSSHUB_FEEDS || 'true'));
+const RSSHUB_BASE_URL = String(process.env.RSSHUB_BASE_URL || 'https://rsshub.app').replace(/\/+$/, '');
+const RSS_EXTRA_FEEDS = String(process.env.RSS_EXTRA_FEEDS || '');
+const NEWS_MAX_AGE_HOURS = Math.max(6, parseInt(process.env.NEWS_MAX_AGE_HOURS || '48', 10) || 48);
+let rssCache = { items: [], updatedAt: 0 };
 
 // === Helpers ===
 const cyrillic = /[\u0400-\u04FF]/;
@@ -99,41 +108,114 @@ function sanitizeExternalUrl(raw) {
   }
 }
 
-// === RSS Fetching ===
-async function fetchRSS(url, source) {
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    const xml = await res.text();
-    const items = [];
-    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-    let match;
-    while ((match = itemRegex.exec(xml)) !== null) {
-      const block = match[1];
-      const title = (block.match(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/)?.[1] || '').trim();
-      const link = sanitizeExternalUrl((block.match(/<link>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/link>/)?.[1] || '').trim());
-      const pubDate = block.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || '';
-      if (title && title !== source) items.push({ title, date: pubDate, source, url: link || undefined });
-    }
-    return items;
-  } catch (e) {
-    console.log(`RSS fetch failed (${source}):`, e.message);
-    return [];
+const chineseChar = /[\u4E00-\u9FFF]/;
+const cnSourceRegex = /(ifeng|凤凰|thepaper|澎湃|caixin|财新|chinadaily|中国日报|xinhua|新华)/i;
+const cnRegionKeywords = ['China', 'Beijing', 'Shanghai', 'Shenzhen', 'Hong Kong', 'China Daily', '中国', '北京', '上海', '深圳', '香港', '台湾'];
+
+function isCnSource(source = '') {
+  return cnSourceRegex.test(source);
+}
+
+function isCnHeadline(text = '') {
+  return chineseChar.test(text) || cnRegionKeywords.some(k => text.includes(k));
+}
+
+function parseTimestampMs(input, fallbackMs = 0) {
+  if (!input) return fallbackMs;
+  const raw = String(input).trim();
+  if (!raw) return fallbackMs;
+
+  const direct = Date.parse(raw);
+  if (Number.isFinite(direct)) return direct;
+
+  if (/^\d{14}$/.test(raw)) {
+    const y = raw.slice(0, 4);
+    const mo = raw.slice(4, 6);
+    const d = raw.slice(6, 8);
+    const h = raw.slice(8, 10);
+    const mi = raw.slice(10, 12);
+    const s = raw.slice(12, 14);
+    const iso = `${y}-${mo}-${d}T${h}:${mi}:${s}Z`;
+    const ms = Date.parse(iso);
+    if (Number.isFinite(ms)) return ms;
   }
+
+  if (/^\d{10,13}$/.test(raw)) {
+    const n = Number(raw);
+    if (Number.isFinite(n)) return raw.length === 13 ? n : n * 1000;
+  }
+
+  return fallbackMs;
+}
+
+// === RSS Fetching ===
+async function fetchRSS(url, source, regionHint = null) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= RSS_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(RSS_TIMEOUT_MS),
+        headers: {
+          'User-Agent': 'Crucix/2.0',
+          'Accept': 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8'
+        }
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const xml = await res.text();
+      const items = [];
+      const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+      let match;
+      while ((match = itemRegex.exec(xml)) !== null) {
+        const block = match[1];
+        const title = (block.match(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/)?.[1] || '').trim();
+        const link = sanitizeExternalUrl((block.match(/<link>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/link>/)?.[1] || '').trim());
+        const pubDate = block.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || '';
+        if (title && title !== source) items.push({ title, date: pubDate, source, url: link || undefined, regionHint });
+      }
+      return items;
+    } catch (e) {
+      lastError = e;
+      if (attempt < RSS_RETRIES) {
+        await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+  }
+  console.log(`RSS fetch failed (${source}):`, lastError?.message || 'unknown error');
+  return [];
 }
 
 export async function fetchAllNews() {
   const feeds = [
-    ['http://feeds.bbci.co.uk/news/world/rss.xml', 'BBC'],
-    ['https://rss.nytimes.com/services/xml/rss/nyt/World.xml', 'NYT'],
-    ['https://feeds.aljazeera.com/xml/rss/all.xml', 'Al Jazeera'],
-    ['https://rss.nytimes.com/services/xml/rss/nyt/Americas.xml', 'NYT Americas'],
-    ['https://rss.nytimes.com/services/xml/rss/nyt/AsiaPacific.xml', 'NYT Asia'],
-    ['https://feeds.bbci.co.uk/news/technology/rss.xml', 'BBC Tech'],
-    ['http://feeds.bbci.co.uk/news/science_and_environment/rss.xml', 'BBC Science'],
+    ['http://feeds.bbci.co.uk/news/world/rss.xml', 'BBC', null],
+    ['https://rss.nytimes.com/services/xml/rss/nyt/World.xml', 'NYT', null],
+    ['https://feeds.aljazeera.com/xml/rss/all.xml', 'Al Jazeera', null],
+    ['https://rss.nytimes.com/services/xml/rss/nyt/Americas.xml', 'NYT Americas', 'Americas'],
+    ['https://rss.nytimes.com/services/xml/rss/nyt/AsiaPacific.xml', 'NYT Asia', 'Asia Pacific'],
+    ['https://feeds.bbci.co.uk/news/technology/rss.xml', 'BBC Tech', null],
+    ['http://feeds.bbci.co.uk/news/science_and_environment/rss.xml', 'BBC Science', null],
   ];
+  if (RSS_ENABLE_CN_FEEDS) {
+    feeds.push(['https://news.ifeng.com/rss/index.xml', 'IFENG', 'China']);
+    if (RSS_ENABLE_RSSHUB_FEEDS) {
+      feeds.push([`${RSSHUB_BASE_URL}/thepaper/featured`, 'The Paper', 'China']);
+      feeds.push([`${RSSHUB_BASE_URL}/caixin/latest`, 'Caixin', 'China']);
+    }
+  }
+  if (RSS_EXTRA_FEEDS.trim()) {
+    const extraFeeds = RSS_EXTRA_FEEDS.split(';')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const [url, source, regionHint] = entry.split('|').map(v => (v || '').trim());
+        if (!url || !source) return null;
+        return [url, source, regionHint || null];
+      })
+      .filter(Boolean);
+    feeds.push(...extraFeeds);
+  }
 
   const results = await Promise.allSettled(
-    feeds.map(([url, source]) => fetchRSS(url, source))
+    feeds.map(([url, source, regionHint]) => fetchRSS(url, source, regionHint))
   );
 
   const allNews = results
@@ -147,22 +229,35 @@ export async function fetchAllNews() {
     const key = item.title.substring(0, 40).toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    const geo = geoTagText(item.title);
-    if (geo) {
+    const geo = geoTagText(item.title) || (item.regionHint ? { lat: 39.9, lon: 116.4, region: item.regionHint } : null);
+    if (geo || isCnHeadline(item.title) || isCnSource(item.source)) {
       geoNews.push({
         title: item.title.substring(0, 100),
         source: item.source,
         date: item.date,
         url: item.url,
-        lat: geo.lat + (Math.random() - 0.5) * 2,
-        lon: geo.lon + (Math.random() - 0.5) * 2,
-        region: geo.region
+        lat: (geo?.lat ?? 39.9) + (Math.random() - 0.5) * 2,
+        lon: (geo?.lon ?? 116.4) + (Math.random() - 0.5) * 2,
+        region: geo?.region || 'China',
+        cnPreferred: isCnHeadline(item.title) || isCnSource(item.source) || item.regionHint === 'China'
       });
     }
   }
 
   geoNews.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-  return geoNews.slice(0, 50);
+  const freshNews = geoNews.slice(0, 50);
+  if (freshNews.length > 0) {
+    rssCache = { items: freshNews, updatedAt: Date.now() };
+    return freshNews;
+  }
+
+  const cacheAge = Date.now() - rssCache.updatedAt;
+  if (rssCache.items.length > 0 && cacheAge <= RSS_CACHE_TTL_MS) {
+    console.log(`RSS fallback: serving ${rssCache.items.length} cached items (${Math.round(cacheAge / 1000)}s old)`);
+    return rssCache.items;
+  }
+
+  return [];
 }
 
 // === Leverageable Ideas from Signals ===
@@ -467,12 +562,26 @@ export async function synthesize(data) {
 // === Unified News Feed for Ticker ===
 function buildNewsFeed(rssNews, gdeltData, tgUrgent, tgTop) {
   const feed = [];
+  const nowMs = Date.now();
+  const cutoffMs = nowMs - NEWS_MAX_AGE_HOURS * 60 * 60 * 1000;
+  const cnBoost = (item) => {
+    const headline = item?.headline || '';
+    const source = item?.source || '';
+    const region = item?.region || '';
+    if (item?.cnPreferred) return 1;
+    if (isCnHeadline(headline) || isCnSource(source)) return 1;
+    if (typeof region === 'string' && /china|cn|中国|北京|上海|香港/i.test(region)) return 1;
+    return 0;
+  };
 
   // RSS news
   for (const n of rssNews) {
+    const tsMs = parseTimestampMs(n.date, 0);
     feed.push({
       headline: n.title, source: n.source, type: 'rss',
-      timestamp: n.date, region: n.region, urgent: false, url: n.url
+      timestamp: tsMs > 0 ? new Date(tsMs).toISOString() : n.date,
+      tsMs,
+      region: n.region, urgent: false, url: n.url, cnPreferred: Boolean(n.cnPreferred)
     });
   }
 
@@ -480,9 +589,12 @@ function buildNewsFeed(rssNews, gdeltData, tgUrgent, tgTop) {
   for (const a of (gdeltData.allArticles || []).slice(0, 10)) {
     if (a.title) {
       const geo = geoTagText(a.title);
+      const tsMs = parseTimestampMs(a.date, nowMs);
       feed.push({
         headline: a.title.substring(0, 100), source: 'GDELT', type: 'gdelt',
-        timestamp: new Date().toISOString(), region: geo?.region || 'Global', urgent: false, url: sanitizeExternalUrl(a.url)
+        timestamp: new Date(tsMs).toISOString(),
+        tsMs,
+        region: geo?.region || 'Global', urgent: false, url: sanitizeExternalUrl(a.url)
       });
     }
   }
@@ -490,24 +602,34 @@ function buildNewsFeed(rssNews, gdeltData, tgUrgent, tgTop) {
   // Telegram urgent
   for (const p of tgUrgent.slice(0, 10)) {
     const text = (p.text || '').replace(/[\u{1F1E0}-\u{1F1FF}]/gu, '').trim();
+    const tsMs = parseTimestampMs(p.date, 0);
     feed.push({
       headline: text.substring(0, 100), source: p.channel?.toUpperCase() || 'TELEGRAM',
-      type: 'telegram', timestamp: p.date, region: 'OSINT', urgent: true
+      type: 'telegram', timestamp: tsMs > 0 ? new Date(tsMs).toISOString() : p.date, tsMs, region: 'OSINT', urgent: true
     });
   }
 
   // Telegram top (non-urgent)
   for (const p of tgTop.slice(0, 5)) {
     const text = (p.text || '').replace(/[\u{1F1E0}-\u{1F1FF}]/gu, '').trim();
+    const tsMs = parseTimestampMs(p.date, 0);
     feed.push({
       headline: text.substring(0, 100), source: p.channel?.toUpperCase() || 'TELEGRAM',
-      type: 'telegram', timestamp: p.date, region: 'OSINT', urgent: false
+      type: 'telegram', timestamp: tsMs > 0 ? new Date(tsMs).toISOString() : p.date, tsMs, region: 'OSINT', urgent: false
     });
   }
 
-  // Sort by timestamp descending, limit to 50
-  feed.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
-  return feed.slice(0, 50);
+  const recentFeed = feed.filter(item => item.tsMs >= cutoffMs);
+  const sortableFeed = recentFeed.length > 0 ? recentFeed : feed.filter(item => item.tsMs > 0);
+
+  sortableFeed.sort((a, b) => {
+    const timeDelta = (b.tsMs || 0) - (a.tsMs || 0);
+    if (Math.abs(timeDelta) > 6 * 60 * 60 * 1000) return timeDelta;
+    const boost = cnBoost(b) - cnBoost(a);
+    if (boost !== 0) return boost;
+    return timeDelta;
+  });
+  return sortableFeed.map(({ tsMs, ...item }) => item).slice(0, 50);
 }
 
 // === CLI Mode: inject into HTML file ===

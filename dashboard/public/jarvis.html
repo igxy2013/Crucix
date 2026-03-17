@@ -1233,6 +1233,32 @@ function renderLower(){
     if (sl.includes('telegram')) return 'tg';
     return 'other';
   };
+  if (lang === 'cn' && !D._cnNewsTranslated && !D._cnNewsTranslating) {
+    const missingNews = feed.filter(n => n.headline && !n.headline_cn);
+    if (missingNews.length > 0) {
+      D._cnNewsTranslating = true;
+      try {
+        fetch('/api/translate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ texts: missingNews.map(n => n.headline), targetLang: 'zh-CN' })
+        }).then(r=>r.json()).then(j=>{
+          if (Array.isArray(j.texts) && j.texts.length === missingNews.length) {
+            missingNews.forEach((n, idx) => { n.headline_cn = j.texts[idx] || n.headline; });
+            D._cnNewsTranslated = true;
+            renderLower();
+          }
+          D._cnNewsTranslating = false;
+        }).catch(()=>{
+          D._cnNewsTranslating = false;
+        });
+      } catch(e) {
+        D._cnNewsTranslating = false;
+      }
+    } else {
+      D._cnNewsTranslated = true;
+    }
+  }
   const tickerCards = feed.map(n => {
     const sc = srcClass(n.source);
     const age = n.timestamp ? getAge(n.timestamp) : '';

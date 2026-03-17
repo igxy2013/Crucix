@@ -405,6 +405,42 @@ function broadcast(data) {
   }
 }
 
+async function translateSynthesizedToChinese(synthesized) {
+  if (!llmProvider?.isConfigured || !synthesized) return;
+
+  if (synthesized.ideas && synthesized.ideas.length > 0) {
+    await batchTranslate(llmProvider, synthesized.ideas, (i) => String(i.title || ''), (i, tr) => { i.title_cn = tr; });
+    await batchTranslate(llmProvider, synthesized.ideas, (i) => String(i.rationale || i.text || ''), (i, tr) => { i.rationale_cn = tr; });
+    await batchTranslate(llmProvider, synthesized.ideas, (i) => String(i.risk || ''), (i, tr) => { i.risk_cn = tr; });
+  }
+
+  if (synthesized.newsFeed && synthesized.newsFeed.length > 0) {
+    const topNews = synthesized.newsFeed.slice(0, 40);
+    await batchTranslate(
+      llmProvider,
+      topNews,
+      (news) => news.headline,
+      (news, translated) => { news.headline_cn = translated; }
+    );
+  }
+
+  if (synthesized.tg) {
+    const urgent = (synthesized.tg.urgent || []).slice(0, 20);
+    const topPosts = (synthesized.tg.topPosts || []).slice(0, 20);
+    if (urgent.length > 0) {
+      await batchTranslate(llmProvider, urgent, (p) => String(p.text || ''), (p, tr) => { p.text_cn = tr; });
+    }
+    if (topPosts.length > 0) {
+      await batchTranslate(llmProvider, topPosts, (p) => String(p.text || ''), (p, tr) => { p.text_cn = tr; });
+    }
+  }
+
+  if (synthesized.who && synthesized.who.length > 0) {
+    const whoItems = synthesized.who.slice(0, 10);
+    await batchTranslate(llmProvider, whoItems, (w) => String(w.title || ''), (w, tr) => { w.title_cn = tr; });
+  }
+}
+
 // === Sweep Cycle ===
 async function runSweepCycle() {
   if (sweepInProgress) {
@@ -455,39 +491,9 @@ async function runSweepCycle() {
         synthesized.ideasSource = 'llm-failed';
       }
 
-      // 5.5 Translate Ideas and News to Chinese if LLM is available
       try {
         console.log('[Crucix] Translating content to Chinese...');
-        // Translate Ideas (titles / rationale / risk independently to avoid JSON parsing issues)
-        if (synthesized.ideas && synthesized.ideas.length > 0) {
-          await batchTranslate(llmProvider, synthesized.ideas, (i) => String(i.title || ''), (i, tr) => { i.title_cn = tr; });
-          await batchTranslate(llmProvider, synthesized.ideas, (i) => String(i.rationale || i.text || ''), (i, tr) => { i.rationale_cn = tr; });
-          await batchTranslate(llmProvider, synthesized.ideas, (i) => String(i.risk || ''), (i, tr) => { i.risk_cn = tr; });
-        }
-        // Translate top 15 news items to save time/tokens
-        if (synthesized.newsFeed && synthesized.newsFeed.length > 0) {
-          const topNews = synthesized.newsFeed.slice(0, 15);
-          await batchTranslate(
-            llmProvider,
-            topNews,
-            (news) => news.headline,
-            (news, translated) => { news.headline_cn = translated; }
-          );
-        }
-        if (synthesized.tg) {
-          const urgent = (synthesized.tg.urgent || []).slice(0, 20);
-          const topPosts = (synthesized.tg.topPosts || []).slice(0, 20);
-          if (urgent.length > 0) {
-            await batchTranslate(llmProvider, urgent, (p) => String(p.text || ''), (p, tr) => { p.text_cn = tr; });
-          }
-          if (topPosts.length > 0) {
-            await batchTranslate(llmProvider, topPosts, (p) => String(p.text || ''), (p, tr) => { p.text_cn = tr; });
-          }
-        }
-        if (synthesized.who && synthesized.who.length > 0) {
-          const whoItems = synthesized.who.slice(0, 10);
-          await batchTranslate(llmProvider, whoItems, (w) => String(w.title || ''), (w, tr) => { w.title_cn = tr; });
-        }
+        await translateSynthesizedToChinese(synthesized);
       } catch (trErr) {
         console.error('[Crucix] Translation failed (non-fatal):', trErr.message);
       }
@@ -584,7 +590,14 @@ async function start() {
     // Try to load existing data first for instant display
     try {
       const existing = JSON.parse(readFileSync(join(RUNS_DIR, 'latest.json'), 'utf8'));
-      synthesize(existing).then(data => {
+      synthesize(existing).then(async (data) => {
+        if (llmProvider?.isConfigured) {
+          try {
+            await translateSynthesizedToChinese(data);
+          } catch (err) {
+            console.error('[Crucix] Startup translation failed (non-fatal):', err.message);
+          }
+        }
         currentData = data;
         console.log('[Crucix] Loaded existing data from runs/latest.json');
         broadcast({ type: 'update', data: currentData });
