@@ -93,7 +93,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--s
 .econ-row .eval{font-family:var(--mono);font-weight:600}
 
 /* CENTER: MAP */
-.map-container{flex:1;min-height:560px;border:1px solid var(--border);background:radial-gradient(ellipse at center,rgba(4,12,20,1),rgba(2,4,8,1));position:relative;overflow:hidden}
+.map-container{height:600px;border:1px solid var(--border);background:radial-gradient(ellipse at center,rgba(4,12,20,1),rgba(2,4,8,1));position:relative;overflow:hidden}
 #globeViz{width:100%;height:100%;cursor:grab}
 #globeViz:active{cursor:grabbing}
 #globeViz canvas{outline:none}
@@ -410,7 +410,7 @@ function checkFullscreen(){
   if (isFS !== wasFS) {
     setTimeout(() => {
       const c = document.getElementById('mapContainer');
-      if (c && globe) globe.width(c.clientWidth).height(c.clientHeight || 560);
+      if (c && globe) globe.width(c.clientWidth).height(c.clientHeight || 420);
       if (!isFlat && flightsVisible) plotMarkers();
     }, 0);
   }
@@ -623,7 +623,7 @@ function renderLeftRail(){
 function initMap(){
   const container = document.getElementById('mapContainer');
   const w = container.clientWidth;
-  const h = container.clientHeight || 560;
+    const h = container.clientHeight || 420;
 
   globe = Globe()
     .width(w)
@@ -718,7 +718,7 @@ function initMap(){
   // Resize handler
   window.addEventListener('resize', () => {
     const c = document.getElementById('mapContainer');
-    globe.width(c.clientWidth).height(c.clientHeight || 560);
+    globe.width(c.clientWidth).height(c.clientHeight || 420);
   });
 
   // Plot globe markers (preloaded but hidden)
@@ -840,6 +840,23 @@ function plotMarkers(){
       popText:cleanText(n.title)
     });
   });
+
+  // ADS-B individual aircraft (3D globe)
+  if(D.adsb){
+    const mil = D.adsb.militaryAircraft || [];
+    const civ = D.adsb.civilAircraft || [];
+    const all = [...mil, ...civ];
+    const airPoints = all.map(a => ({
+      lat: a.lat, lng: a.lon, alt: (a.alt === 'ground' ? 0.01 : Math.min((a.alt || 0) / 100000, 0.3)),
+      size: 0.15,
+      color: a.isMil ? '#ff5f63' : '#64f0c8',
+      popHead: a.callsign || 'NO CALLSIGN',
+      popText: `Type: ${a.type || 'N/A'}<br>Alt: ${a.alt}<br>Origin: ${a.country}`,
+      popMeta: a.isMil ? 'MILITARY AIRCRAFT' : 'CIVIL AIRCRAFT',
+      type: 'air'
+    }));
+    points.push(...airPoints);
+  }
 
   // Set points on globe
   globe.pointsData(points);
@@ -984,7 +1001,7 @@ function toggleMapMode(){
 
 function initFlatMap(){
   const container = document.getElementById('mapContainer');
-  flatW = container.clientWidth; flatH = container.clientHeight || 560;
+  flatW = container.clientWidth; flatH = container.clientHeight || 420;
   flatSvg = d3.select('#flatMapSvg').attr('viewBox',`0 0 ${flatW} ${flatH}`).attr('preserveAspectRatio','xMidYMid meet');
   flatProjection = d3.geoNaturalEarth1().fitSize([flatW-20,flatH-20],{type:'Sphere'}).translate([flatW/2,flatH/2]);
   flatPath = d3.geoPath(flatProjection);
@@ -1028,6 +1045,21 @@ function plotFlatMarkers(){
       ev=>showPopup(ev,a.region,`${t('AIRCRAFT_TRACKED',{n:a.total})}<br>${t('NO_CALLSIGN')}: ${a.noCallsign}<br>${t('HIGH_ALTITUDE')}: ${a.highAlt}`,t('AIR_ACTIVITY')));
     if(g) g.append('text').attr('class','marker-label').attr('x',10).attr('y',3).attr('fill','var(--dim)').attr('font-size','9px').attr('font-family','var(--mono)').text(a.region.replace(' Region','')+' '+a.total);
   });
+  
+  // ADS-B Aircraft (Military & Civil)
+  if (D.adsb) {
+    const allPlanes = [...(D.adsb.militaryAircraft || []), ...(D.adsb.civilAircraft || [])];
+    allPlanes.forEach(p => {
+      const color = p.isMil ? 'rgba(255,95,99,0.8)' : 'rgba(100,240,200,0.6)'; // Red for mil, Teal for civil
+      const halo = p.isMil ? 'rgba(255,95,99,0.3)' : 'rgba(100,240,200,0.2)';
+      const type = p.isMil ? 'MILITARY' : 'CIVIL';
+      addPt(p.lat, p.lon, 2, color, halo,
+        ev => showPopup(ev, p.callsign || 'NO CALLSIGN', 
+          `Type: ${p.type || 'N/A'}<br>Alt: ${p.alt}<br>Origin: ${p.country}`, 
+          `${type} AIRCRAFT`));
+    });
+  }
+
   // Thermal
   D.thermal.forEach(thm=>thm.fires.forEach(f=>{
     addPt(f.lat,f.lon,2+Math.min(f.frp/50,5),'rgba(255,95,99,0.6)','rgba(255,95,99,0.2)',

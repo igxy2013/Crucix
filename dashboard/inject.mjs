@@ -20,6 +20,7 @@ const RSS_ENABLE_RSSHUB_FEEDS = !/^(0|false|off|no)$/i.test(String(process.env.R
 const RSSHUB_BASE_URL = String(process.env.RSSHUB_BASE_URL || 'https://rsshub.app').replace(/\/+$/, '');
 const RSS_EXTRA_FEEDS = String(process.env.RSS_EXTRA_FEEDS || '');
 const NEWS_MAX_AGE_HOURS = Math.max(6, parseInt(process.env.NEWS_MAX_AGE_HOURS || '48', 10) || 48);
+const OSINT_MAX_AGE_HOURS = Math.max(6, parseInt(process.env.OSINT_MAX_AGE_HOURS || '48', 10) || 48);
 let rssCache = { items: [], updatedAt: 0 };
 
 // === Helpers ===
@@ -429,15 +430,47 @@ export async function synthesize(data) {
     receivers: (z.receivers || []).slice(0, 5).map(r => ({ name: r.name || '', lat: r.lat || 0, lon: r.lon || 0 }))
   }));
   const tgData = data.sources.Telegram || {};
-  const tgUrgent = (tgData.urgentPosts || []).filter(p => isEnglish(p.text)).map(p => ({
-    channel: p.channel, text: p.text?.substring(0, 200), views: p.views, date: p.date, urgentFlags: p.urgentFlags || []
-  }));
-  const tgTop = (tgData.topPosts || []).filter(p => isEnglish(p.text)).map(p => ({
-    channel: p.channel, text: p.text?.substring(0, 200), views: p.views, date: p.date, urgentFlags: []
-  }));
-  const who = (data.sources.WHO?.diseaseOutbreakNews || []).slice(0, 10).map(w => ({
-    title: w.title?.substring(0, 120), date: w.date, summary: w.summary?.substring(0, 150)
-  }));
+  const nowMs = Date.now();
+  const osintCutoffMs = nowMs - OSINT_MAX_AGE_HOURS * 60 * 60 * 1000;
+  const tgUrgent = (tgData.urgentPosts || [])
+    .filter(p => isEnglish(p.text))
+    .map(p => ({
+      channel: p.channel,
+      text: p.text?.substring(0, 200),
+      views: p.views,
+      date: p.date,
+      urgentFlags: p.urgentFlags || [],
+      tsMs: parseTimestampMs(p.date, 0)
+    }))
+    .filter(p => p.tsMs >= osintCutoffMs)
+    .sort((a, b) => b.tsMs - a.tsMs)
+    .slice(0, 20)
+    .map(({ tsMs, ...p }) => p);
+  const tgTop = (tgData.topPosts || [])
+    .filter(p => isEnglish(p.text))
+    .map(p => ({
+      channel: p.channel,
+      text: p.text?.substring(0, 200),
+      views: p.views,
+      date: p.date,
+      urgentFlags: [],
+      tsMs: parseTimestampMs(p.date, 0)
+    }))
+    .filter(p => p.tsMs >= osintCutoffMs)
+    .sort((a, b) => b.tsMs - a.tsMs)
+    .slice(0, 20)
+    .map(({ tsMs, ...p }) => p);
+  const who = (data.sources.WHO?.diseaseOutbreakNews || [])
+    .map(w => ({
+      title: w.title?.substring(0, 120),
+      date: w.date,
+      summary: w.summary?.substring(0, 150),
+      tsMs: parseTimestampMs(w.date, 0)
+    }))
+    .filter(w => w.tsMs >= osintCutoffMs)
+    .sort((a, b) => b.tsMs - a.tsMs)
+    .slice(0, 10)
+    .map(({ tsMs, ...w }) => w);
   const fred = (data.sources.FRED?.indicators || []).map(f => ({
     id: f.id, label: f.label, value: f.value, date: f.date,
     recent: f.recent || [],
@@ -475,6 +508,21 @@ export async function synthesize(data) {
     })),
     launchByCountry: spaceData.launchByCountry || {},
     signals: spaceData.signals || [],
+  };
+
+  // ADS-B Military & Civil
+  const adsbData = data.sources['ADS-B'] || {};
+  const adsb = {
+    totalMilitary: adsbData.totalMilitary || 0,
+    totalCivil: adsbData.totalCivil || 0,
+    militaryAircraft: (adsbData.militaryAircraft || []).map(a => ({
+      callsign: a.callsign, type: a.type, lat: a.latitude, lon: a.longitude,
+      alt: a.altitude, country: a.militaryMatch, isMil: true
+    })),
+    civilAircraft: (adsbData.civilAircraft || []).map(a => ({
+      callsign: a.callsign, type: a.type, lat: a.latitude, lon: a.longitude,
+      alt: a.altitude, country: a.country || 'Civil', isMil: false
+    }))
   };
 
   // ACLED conflict events
@@ -550,6 +598,7 @@ export async function synthesize(data) {
     sdr: { total: sdrNet.totalReceivers || 0, online: sdrNet.online || 0, zones: sdrZones },
     tg: { posts: tgData.totalPosts || 0, urgent: tgUrgent, topPosts: tgTop },
     who, fred, energy, bls, treasury, gscpi, defense, noaa, acled, gdelt, space, health, news,
+    adsb, // Added ADS-B data
     markets, // Live Yahoo Finance market data
     ideas: [], ideasSource: 'disabled',
     // newsFeed for ticker (merged RSS + GDELT + Telegram)

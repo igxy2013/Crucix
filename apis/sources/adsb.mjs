@@ -9,8 +9,10 @@ import { safeFetch } from '../utils/fetch.mjs';
 const ENDPOINTS = {
   // v2 API via RapidAPI (requires ADSB_API_KEY)
   rapidApi: 'https://adsbexchange-com1.p.rapidapi.com/v2',
-  // Public globe feed (may be rate-limited or blocked for automated access)
-  publicFeed: 'https://globe.adsbexchange.com/data/aircraft.json',
+  // Public military feed (community hosted via adsb.lol)
+  publicMilFeed: 'https://api.adsb.lol/v2/mil',
+  // Public all-traffic feed (community hosted via adsb.lol) - large!
+  publicAllFeed: 'https://api.adsb.lol/v2/all',
   // Alternative: aircraft within bounding box
   publicTrace: 'https://globe.adsbexchange.com/data/traces',
 };
@@ -151,8 +153,13 @@ async function fetchViaRapidApi(apiKey) {
 
 // Attempt to fetch from public feed
 async function fetchPublicFeed() {
-  const data = await safeFetch(ENDPOINTS.publicFeed, { timeout: 15000 });
-  return data;
+  // Use public military feed first (faster, targeted)
+  const milData = await safeFetch(ENDPOINTS.publicMilFeed, { timeout: 15000 });
+  if (milData && !milData.error && Array.isArray(milData.ac)) {
+    milData.ac.forEach(a => { a.mil = true; });
+    return milData;
+  }
+  return milData;
 }
 
 // Get military aircraft from available sources
@@ -173,7 +180,8 @@ export async function getMilitaryAircraft(apiKey) {
   if (pubData && !pubData.error) {
     const aircraft = pubData.ac || pubData.aircraft || pubData.states || [];
     if (Array.isArray(aircraft)) {
-      return aircraft.map(classifyAircraft).filter(a => a.isMilitary);
+      // Include ALL aircraft from public feed, but ensure isMilitary flag is set correctly
+      return aircraft.map(classifyAircraft);
     }
   }
 
@@ -208,10 +216,13 @@ export async function getAircraftInArea(lat, lon, radiusNm = 250, apiKey) {
 // Briefing — attempt to get military flight data, document what's available
 export async function briefing() {
   const apiKey = process.env.ADSB_API_KEY || process.env.RAPIDAPI_KEY || null;
-  const militaryAircraft = await getMilitaryAircraft(apiKey);
+  const allAircraft = await getMilitaryAircraft(apiKey);
 
   // If we got data, analyze it
-  if (militaryAircraft && militaryAircraft.length > 0) {
+  if (allAircraft && allAircraft.length > 0) {
+    const militaryAircraft = allAircraft.filter(a => a.isMilitary);
+    const civilAircraft = allAircraft.filter(a => !a.isMilitary);
+    
     // Group by military match type
     const byCountry = {};
     const reconAircraft = [];
@@ -256,6 +267,7 @@ export async function briefing() {
       timestamp: new Date().toISOString(),
       status: 'live',
       totalMilitary: militaryAircraft.length,
+      totalCivil: civilAircraft.length,
       byCountry,
       categories: {
         reconnaissance: reconAircraft.slice(0, 20),
@@ -264,6 +276,7 @@ export async function briefing() {
         vipTransport: vipTransport.slice(0, 5),
       },
       militaryAircraft: militaryAircraft.slice(0, 50), // cap for briefing size
+      civilAircraft: civilAircraft.slice(0, 50), // Sample of civil traffic
       signals: signals.length > 0 ? signals : ['Military flight activity within normal patterns'],
     };
   }
@@ -274,6 +287,7 @@ export async function briefing() {
     timestamp: new Date().toISOString(),
     status: apiKey ? 'error' : 'no_key',
     militaryAircraft: [],
+    civilAircraft: [],
     message: apiKey
       ? 'ADS-B Exchange API returned no data. The endpoint may be temporarily unavailable.'
       : 'No ADS-B Exchange API key configured. Set ADSB_API_KEY for military flight tracking.',
