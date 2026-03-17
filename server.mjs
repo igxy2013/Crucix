@@ -17,6 +17,7 @@ import { generateLLMIdeas } from './lib/llm/ideas.mjs';
 import { batchTranslate } from './lib/llm/translate.mjs';
 import { TelegramAlerter } from './lib/alerts/telegram.mjs';
 import { DiscordAlerter } from './lib/alerts/discord.mjs';
+import { FeishuAlerter } from './lib/alerts/feishu.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -43,6 +44,7 @@ const memory = new MemoryManager(RUNS_DIR);
 let llmProvider = createLLMProvider(config.llm);
 const telegramAlerter = new TelegramAlerter(config.telegram);
 const discordAlerter = new DiscordAlerter(config.discord || {});
+const feishuAlerter = new FeishuAlerter(config.feishu || {});
 
 if (llmProvider) console.log(`[Crucix] LLM enabled: ${llmProvider.name} (${llmProvider.model})`);
 if (telegramAlerter.isConfigured) {
@@ -228,6 +230,9 @@ if (discordAlerter.isConfigured) {
     console.error('[Crucix] Discord bot startup failed (non-fatal):', err.message);
   });
 }
+if (feishuAlerter.isConfigured) {
+  console.log('[Crucix] Feishu alerts enabled');
+}
 
 // === Express Server ===
 const app = express();
@@ -265,6 +270,8 @@ app.get('/api/health', (req, res) => {
     llmEnabled: !!config.llm.provider,
     llmProvider: config.llm.provider,
     telegramEnabled: !!(config.telegram.botToken && config.telegram.chatId),
+    discordEnabled: !!(config.discord.botToken || config.discord.webhookUrl),
+    feishuEnabled: !!(config.feishu.webhookUrl || (config.feishu.appId && config.feishu.appSecret && (config.feishu.receiveId || config.feishu.receiveMobile || config.feishu.receiveEmail))),
     refreshIntervalMinutes: config.refreshIntervalMinutes,
     marketRefreshMinutes: config.marketRefreshMinutes,
   });
@@ -499,6 +506,11 @@ async function runSweepCycle() {
       if (discordAlerter.isConfigured) {
         discordAlerter.evaluateAndAlert(llmProvider, delta, memory).catch(err => {
           console.error('[Crucix] Discord alert error:', err.message);
+        });
+      }
+      if (feishuAlerter.isConfigured) {
+        feishuAlerter.evaluateAndAlert(llmProvider, delta, memory).catch(err => {
+          console.error('[Crucix] Feishu alert error:', err.message);
         });
       }
     }

@@ -27,6 +27,15 @@ export default {
     guildId: process.env.DISCORD_GUILD_ID || null,   // Server ID (for instant slash command registration)
     webhookUrl: process.env.DISCORD_WEBHOOK_URL || null, // Fallback: webhook-only alerts (no bot needed)
   },
+  feishu: {
+    webhookUrl: process.env.FEISHU_WEBHOOK_URL || null,
+    appId: process.env.FEISHU_APP_ID || null,
+    appSecret: process.env.FEISHU_APP_SECRET || null,
+    receiveIdType: process.env.FEISHU_RECEIVE_ID_TYPE || 'open_id',
+    receiveId: process.env.FEISHU_RECEIVE_ID || null,
+    receiveMobile: process.env.FEISHU_RECEIVE_MOBILE || null,
+    receiveEmail: process.env.FEISHU_RECEIVE_EMAIL || null,
+  },
 
   // Delta engine thresholds — override defaults from lib/delta/engine.mjs
   // Set to null to use built-in defaults

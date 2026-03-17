@@ -213,6 +213,18 @@ For Codex, run `npx @openai/codex login` to authenticate via your ChatGPT subscr
 | `DISCORD_GUILD_ID` | *(Optional)* Right-click server → Copy Server ID. Enables instant slash command registration (otherwise takes up to 1 hour for global commands) |
 | `DISCORD_WEBHOOK_URL` | *(Optional)* Channel Settings → Integrations → Webhooks → New Webhook → Copy URL. Use this for alert-only mode without a bot |
 
+### Feishu Alerts (optional)
+
+| Key | How to Get |
+|-----|------------|
+| `FEISHU_WEBHOOK_URL` | In Feishu group: Group Settings → Bots → Add Custom Bot → copy webhook URL |
+| `FEISHU_APP_ID` | Feishu app credentials (for tenant access token mode) |
+| `FEISHU_APP_SECRET` | Feishu app credentials (for tenant access token mode) |
+| `FEISHU_RECEIVE_ID_TYPE` | `open_id` / `user_id` / `union_id` / `email` / `chat_id` |
+| `FEISHU_RECEIVE_ID` | Target user or chat id for `/im/v1/messages` push |
+| `FEISHU_RECEIVE_MOBILE` | *(Optional)* Auto resolve user `open_id` by mobile when `FEISHU_RECEIVE_ID` is empty |
+| `FEISHU_RECEIVE_EMAIL` | *(Optional)* Auto resolve user `open_id` by email when `FEISHU_RECEIVE_ID` is empty |
+
 **Discord bot setup:**
 1. Go to [Discord Developer Portal](https://discord.com/developers/applications) and create a new application
 2. Go to **Bot** → click **Reset Token** → copy the token to `DISCORD_BOT_TOKEN`
@@ -222,6 +234,7 @@ For Codex, run `npx @openai/codex login` to authenticate via your ChatGPT subscr
 6. Install the dependency: `npm install discord.js`
 
 Alerts work with or without an LLM on both Telegram and Discord. With an LLM configured, signal evaluation is richer and more context-aware. Without one, a deterministic rule engine evaluates signals based on severity, cross-domain correlation, and signal counts.
+Feishu alerts support both webhook mode and app token mode (`tenant_access_token` + `/im/v1/messages`) and reuse the same signal-evaluation pipeline.
 
 ### Without Any Keys
 
@@ -379,6 +392,13 @@ All settings are in `.env` with sensible defaults:
 | `DISCORD_CHANNEL_ID` | — | Discord channel for alerts |
 | `DISCORD_GUILD_ID` | — | Server ID (instant slash command registration) |
 | `DISCORD_WEBHOOK_URL` | — | Webhook URL (alert-only fallback, no bot needed) |
+| `FEISHU_WEBHOOK_URL` | — | Feishu custom bot webhook URL (alert-only mode) |
+| `FEISHU_APP_ID` | — | Feishu app id (app token mode) |
+| `FEISHU_APP_SECRET` | — | Feishu app secret (app token mode) |
+| `FEISHU_RECEIVE_ID_TYPE` | `open_id` | Receive id type for `/im/v1/messages` |
+| `FEISHU_RECEIVE_ID` | — | Target receiver id for `/im/v1/messages` |
+| `FEISHU_RECEIVE_MOBILE` | — | Optional mobile for auto resolving receiver open_id |
+| `FEISHU_RECEIVE_EMAIL` | — | Optional email for auto resolving receiver open_id |
 
 Delta engine thresholds (how sensitive the system is to changes between sweeps) can be customized in `crucix.config.mjs` under the `delta.thresholds` section. The defaults are tuned to filter out noise while catching meaningful moves.
 
