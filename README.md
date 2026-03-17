@@ -4,6 +4,8 @@
 
 **Your own intelligence terminal. 27 sources. One command. Zero cloud.**
 
+English | [简体中文](README.zh-CN.md)
+
 [![Node.js 22+](https://img.shields.io/badge/node-22%2B-brightgreen)](#quick-start)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE)
 [![Dependencies](https://img.shields.io/badge/dependencies-1%20(express)-orange)](#architecture)
