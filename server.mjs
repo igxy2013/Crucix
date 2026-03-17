@@ -9,10 +9,12 @@ import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import config from './crucix.config.mjs';
 import { fullBriefing } from './apis/briefing.mjs';
+import { briefing as yfinanceBrief } from './apis/sources/yfinance.mjs';
 import { synthesize, generateIdeas } from './dashboard/inject.mjs';
 import { MemoryManager } from './lib/delta/index.mjs';
 import { createLLMProvider } from './lib/llm/index.mjs';
 import { generateLLMIdeas } from './lib/llm/ideas.mjs';
+import { batchTranslate } from './lib/llm/translate.mjs';
 import { TelegramAlerter } from './lib/alerts/telegram.mjs';
 import { DiscordAlerter } from './lib/alerts/discord.mjs';
 
@@ -38,7 +40,7 @@ const sseClients = new Set();
 const memory = new MemoryManager(RUNS_DIR);
 
 // === LLM + Telegram + Discord ===
-const llmProvider = createLLMProvider(config.llm);
+let llmProvider = createLLMProvider(config.llm);
 const telegramAlerter = new TelegramAlerter(config.telegram);
 const discordAlerter = new DiscordAlerter(config.discord || {});
 
@@ -229,6 +231,7 @@ if (discordAlerter.isConfigured) {
 
 // === Express Server ===
 const app = express();
+app.use(express.json());
 app.use(express.static(join(ROOT, 'dashboard/public')));
 
 // Serve loading page until first sweep completes, then the dashboard
@@ -263,7 +266,116 @@ app.get('/api/health', (req, res) => {
     llmProvider: config.llm.provider,
     telegramEnabled: !!(config.telegram.botToken && config.telegram.chatId),
     refreshIntervalMinutes: config.refreshIntervalMinutes,
+    marketRefreshMinutes: config.marketRefreshMinutes,
   });
+});
+
+// API: get config
+app.get('/api/config', (req, res) => {
+  res.json({
+    llmProvider: config.llm.provider,
+    llmApiKey: config.llm.apiKey,
+    llmModel: config.llm.model
+  });
+});
+
+// API: save config
+app.post('/api/config', (req, res) => {
+  try {
+    const { provider, apiKey, model } = req.body;
+    
+    // Update config object in memory
+    config.llm.provider = provider || null;
+    config.llm.apiKey = apiKey || null;
+    config.llm.model = model || null;
+    
+    // Update LLM Provider instance
+    llmProvider = createLLMProvider(config.llm);
+    if (llmProvider) {
+      console.log(`[Crucix] LLM dynamically updated to: ${llmProvider.name} (${llmProvider.model})`);
+    } else {
+      console.log(`[Crucix] LLM disabled via config`);
+    }
+
+    if (currentData) {
+      currentData.ideasSource = llmProvider?.isConfigured ? 'pending' : 'disabled';
+      broadcast({ type: 'update', data: currentData });
+    }
+
+    // Write back to .env
+    const envPath = join(ROOT, '.env');
+    let envContent = '';
+    if (existsSync(envPath)) {
+      envContent = readFileSync(envPath, 'utf8');
+    }
+
+    // Update or append variables
+    const updateEnv = (key, value) => {
+      const regex = new RegExp(`^${key}=.*$`, 'm');
+      const newValue = `${key}=${value || ''}`;
+      if (regex.test(envContent)) {
+        envContent = envContent.replace(regex, newValue);
+      } else {
+        envContent += `\n${newValue}`;
+      }
+    };
+
+    updateEnv('LLM_PROVIDER', provider);
+    updateEnv('LLM_API_KEY', apiKey);
+    updateEnv('LLM_MODEL', model);
+
+    writeFileSync(envPath, envContent.trim() + '\n');
+
+    if (llmProvider?.isConfigured && !sweepInProgress) {
+      runSweepCycle().catch(err => console.error('[Crucix] Auto sweep after config save failed:', err.message));
+    }
+    
+    res.json({ success: true, llmEnabled: !!llmProvider?.isConfigured });
+  } catch (err) {
+    console.error('[Crucix] Failed to save config:', err);
+    res.status(500).json({ error: 'Failed to save configuration' });
+  }
+});
+
+// API: ad-hoc translate (frontend may request missing CN fields)
+app.post('/api/translate', async (req, res) => {
+  try {
+    const { texts, targetLang } = req.body || {};
+    if (!Array.isArray(texts) || texts.length === 0) return res.status(400).json({ error: 'texts array required' });
+    if (!llmProvider?.isConfigured) return res.status(400).json({ error: 'LLM not configured' });
+    const items = texts.map(t => ({ v: String(t || '') }));
+    await batchTranslate(llmProvider, items, (i) => i.v, (i, tr) => { i.v = tr; }, targetLang || 'zh-CN');
+    res.json({ texts: items.map(i => i.v) });
+  } catch (err) {
+    console.error('[Crucix] /api/translate failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: test config
+app.post('/api/config/test', async (req, res) => {
+  try {
+    const { provider, apiKey, model } = req.body;
+    if (!provider || !apiKey) {
+      return res.status(400).json({ success: false, error: 'Provider and API Key required' });
+    }
+
+    const testProvider = createLLMProvider({ provider, apiKey, model });
+    if (!testProvider) {
+      return res.status(400).json({ success: false, error: 'Invalid provider configuration' });
+    }
+
+    const result = await testProvider.complete('You are a helpful assistant.', 'Please reply with exactly one word: Pong', { maxTokens: 128, timeout: 20000 });
+    
+    if (result && (result.text || result.model)) {
+      res.json({ success: true, message: result.text || 'Connected' });
+    } else {
+      res.status(500).json({ success: false, error: 'Empty response from LLM' });
+    }
+  } catch (err) {
+    console.error('[Crucix] LLM Test failed:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // SSE: live updates
@@ -334,6 +446,43 @@ async function runSweepCycle() {
         console.error('[Crucix] LLM ideas failed (non-fatal):', llmErr.message);
         synthesized.ideas = [];
         synthesized.ideasSource = 'llm-failed';
+      }
+
+      // 5.5 Translate Ideas and News to Chinese if LLM is available
+      try {
+        console.log('[Crucix] Translating content to Chinese...');
+        // Translate Ideas (titles / rationale / risk independently to avoid JSON parsing issues)
+        if (synthesized.ideas && synthesized.ideas.length > 0) {
+          await batchTranslate(llmProvider, synthesized.ideas, (i) => String(i.title || ''), (i, tr) => { i.title_cn = tr; });
+          await batchTranslate(llmProvider, synthesized.ideas, (i) => String(i.rationale || i.text || ''), (i, tr) => { i.rationale_cn = tr; });
+          await batchTranslate(llmProvider, synthesized.ideas, (i) => String(i.risk || ''), (i, tr) => { i.risk_cn = tr; });
+        }
+        // Translate top 15 news items to save time/tokens
+        if (synthesized.newsFeed && synthesized.newsFeed.length > 0) {
+          const topNews = synthesized.newsFeed.slice(0, 15);
+          await batchTranslate(
+            llmProvider,
+            topNews,
+            (news) => news.headline,
+            (news, translated) => { news.headline_cn = translated; }
+          );
+        }
+        if (synthesized.tg) {
+          const urgent = (synthesized.tg.urgent || []).slice(0, 20);
+          const topPosts = (synthesized.tg.topPosts || []).slice(0, 20);
+          if (urgent.length > 0) {
+            await batchTranslate(llmProvider, urgent, (p) => String(p.text || ''), (p, tr) => { p.text_cn = tr; });
+          }
+          if (topPosts.length > 0) {
+            await batchTranslate(llmProvider, topPosts, (p) => String(p.text || ''), (p, tr) => { p.text_cn = tr; });
+          }
+        }
+        if (synthesized.who && synthesized.who.length > 0) {
+          const whoItems = synthesized.who.slice(0, 10);
+          await batchTranslate(llmProvider, whoItems, (w) => String(w.title || ''), (w, tr) => { w.title_cn = tr; });
+        }
+      } catch (trErr) {
+        console.error('[Crucix] Translation failed (non-fatal):', trErr.message);
       }
     } else {
       synthesized.ideas = [];
@@ -438,6 +587,39 @@ async function start() {
 
     // Schedule recurring sweeps
     setInterval(runSweepCycle, config.refreshIntervalMinutes * 60 * 1000);
+    setInterval(async () => {
+      try {
+        const yf = await yfinanceBrief();
+        if (!yf || !currentData) return;
+        const quotes = yf.quotes || {};
+        const mk = {
+          indexes: (yf.indexes || []).map(q => ({
+            symbol: q.symbol, name: q.name, price: q.price,
+            change: q.change, changePct: q.changePct, history: q.history || [], currency: quotes[q.symbol]?.currency || q.currency
+          })),
+          rates: (yf.rates || []).map(q => ({
+            symbol: q.symbol, name: q.name, price: q.price,
+            change: q.change, changePct: q.changePct, currency: quotes[q.symbol]?.currency || q.currency
+          })),
+          commodities: (yf.commodities || []).map(q => ({
+            symbol: q.symbol, name: q.name, price: q.price,
+            change: q.change, changePct: q.changePct, history: q.history || [], currency: quotes[q.symbol]?.currency || q.currency
+          })),
+          crypto: (yf.crypto || []).map(q => ({
+            symbol: q.symbol, name: q.name, price: q.price,
+            change: q.change, changePct: q.changePct, currency: quotes[q.symbol]?.currency || q.currency
+          })),
+          vix: quotes['^VIX'] ? {
+            value: quotes['^VIX'].price,
+            change: quotes['^VIX'].change,
+            changePct: quotes['^VIX'].changePct,
+          } : null,
+          timestamp: yf.summary?.timestamp || new Date().toISOString(),
+        };
+        currentData.markets = mk;
+        broadcast({ type: 'update', data: currentData });
+      } catch {}
+    }, Math.max(1, config.marketRefreshMinutes) * 60 * 1000);
   });
 }
 

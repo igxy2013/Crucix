@@ -5,9 +5,11 @@ import './apis/utils/env.mjs'; // Load .env first
 export default {
   port: parseInt(process.env.PORT) || 3117,
   refreshIntervalMinutes: parseInt(process.env.REFRESH_INTERVAL_MINUTES) || 15,
+  marketRefreshMinutes: parseInt(process.env.MARKET_REFRESH_MINUTES) || 2,
+  marketFocus: (process.env.MARKET_FOCUS || 'global').toLowerCase(),
 
   llm: {
-    provider: process.env.LLM_PROVIDER || null, // anthropic | openai | gemini | codex
+    provider: process.env.LLM_PROVIDER || null, // anthropic | openai | gemini | minimax | codex
     apiKey: process.env.LLM_API_KEY || null,
     model: process.env.LLM_MODEL || null,
   },

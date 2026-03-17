@@ -6,6 +6,7 @@
 <title>CRUCIX — Initializing</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="i18n.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -35,9 +36,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--m
 #countdown .eta{color:var(--text)}
 #countdown .bar-wrap{width:340px;height:2px;background:rgba(100,240,200,0.08);margin-top:8px;overflow:hidden}
 #countdown .bar-fill{height:100%;background:var(--accent);width:0%;transition:width 1s linear;box-shadow:0 0 6px var(--accent)}
+
+.lang-toggle{position:absolute;top:16px;right:16px;padding:6px 12px;border:1px solid var(--border);background:rgba(0,0,0,0.4);color:var(--dim);font-family:var(--mono);font-size:10px;cursor:pointer;letter-spacing:0.1em;text-transform:uppercase;transition:all 0.2s}
+.lang-toggle:hover{border-color:var(--accent);color:var(--text)}
 </style>
 </head>
 <body>
+<button class="lang-toggle" onclick="toggleLang()">EN / CN</button>
 <div class="container">
   <div class="logo-ring">
     <span class="logo-text">CX</span>
@@ -57,16 +62,35 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--m
 </div>
 
 <script>
+// === I18N ===
+let lang = localStorage.getItem('crucix-lang') || 'en';
+function t(key, params = {}) {
+  let str = (window.I18N_DATA && window.I18N_DATA[lang] && window.I18N_DATA[lang][key]) || key;
+  for (const [k, v] of Object.entries(params)) {
+    str = str.replace(`{${k}}`, v);
+  }
+  return str;
+}
+function toggleLang() {
+  lang = lang === 'en' ? 'cn' : 'en';
+  localStorage.setItem('crucix-lang', lang);
+  location.reload(); // Simple way to re-init everything
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const langBtn = document.querySelector('.lang-toggle');
+  if (langBtn) langBtn.textContent = lang === 'en' ? 'EN / CN' : '中文 / EN';
+});
+
 const SWEEP_ESTIMATE_S = 50; // estimated sweep duration in seconds
 
 const lines = [
-  'CRUCIX INTELLIGENCE ENGINE v2.0.0',
-  'INITIATING FIRST SWEEP...',
+  t('INITIALIZING'),
+  t('INITIATING_FIRST_SWEEP'),
   '├── CONNECTING 25 OSINT SOURCES',
   '├── GDELT · OPENSKY · FIRMS · MARITIME · SAFECAST',
   '├── FRED · BLS · EIA · TREASURY · GSCPI',
   '└── TELEGRAM · WHO · OFAC · ACLED · REDDIT · BLUESKY',
-  '<span class="ok">AWAITING SWEEP COMPLETION...</span>',
+  `<span class="ok">${t('AWAITING_SWEEP_COMPLETION')}</span>`,
 ];
 
 const container = document.getElementById('bootLines');
@@ -80,14 +104,15 @@ lines.forEach((text, i) => {
 });
 
 const statusMessages = [
-  'COLLECTING DATA...',
-  'PROCESSING SOURCES...',
-  'SYNTHESIZING SIGNALS...',
-  'CORRELATING FEEDS...',
-  'AWAITING COMPLETION...',
+  t('COLLECTING_DATA'),
+  t('PROCESSING_SOURCES'),
+  t('SYNTHESIZING_SIGNALS'),
+  t('CORRELATING_FEEDS'),
+  t('AWAITING_COMPLETION'),
 ];
 let statusIdx = 0;
 const statusText = document.getElementById('statusText');
+statusText.textContent = statusMessages[0]; // Initial
 setInterval(() => {
   statusIdx = (statusIdx + 1) % statusMessages.length;
   statusText.textContent = statusMessages[statusIdx];

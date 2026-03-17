@@ -28,6 +28,14 @@ const SYMBOLS = {
   'ETH-USD': 'Ethereum',
   // Volatility
   '^VIX': 'VIX',
+  // China A-shares & HK
+  '^SSEC': 'Shanghai Composite',
+  '000300.SS': 'CSI 300',
+  '000905.SS': 'CSI 500',
+  '399001.SZ': 'Shenzhen Composite',
+  '399006.SZ': 'ChiNext',
+  '000016.SS': 'SSE 50',
+  '^HSI': 'Hang Seng Index',
 };
 
 async function fetchQuote(symbol) {
@@ -49,8 +57,8 @@ async function fetchQuote(symbol) {
     const timestamps = result.timestamp || [];
 
     // Get current price and previous close
-    const price = meta.regularMarketPrice ?? closes[closes.length - 1];
-    const prevClose = meta.chartPreviousClose ?? meta.previousClose ?? closes[closes.length - 2];
+    const price = meta.regularMarketPrice ?? closes[closes.length - 1] ?? meta.previousClose ?? meta.chartPreviousClose ?? null;
+    const prevClose = meta.chartPreviousClose ?? meta.previousClose ?? closes[closes.length - 2] ?? null;
     const change = price && prevClose ? price - prevClose : 0;
     const changePct = prevClose ? (change / prevClose) * 100 : 0;
 
@@ -65,6 +73,11 @@ async function fetchQuote(symbol) {
       }
     }
 
+    // Currency override for CN/HK indexes
+    let currency = meta.currency || 'USD';
+    if (symbol === '^SSEC' || /\.SS$/.test(symbol) || /\.SZ$/.test(symbol)) currency = 'CNY';
+    if (symbol === '^HSI') currency = 'HKD';
+
     return {
       symbol,
       name: SYMBOLS[symbol] || meta.shortName || symbol,
@@ -72,7 +85,7 @@ async function fetchQuote(symbol) {
       prevClose: Math.round((prevClose || 0) * 100) / 100,
       change: Math.round(change * 100) / 100,
       changePct: Math.round(changePct * 100) / 100,
-      currency: meta.currency || 'USD',
+      currency,
       exchange: meta.exchangeName || '',
       marketState: meta.marketState || 'UNKNOWN',
       history,
@@ -117,7 +130,12 @@ export async function collect() {
       failed,
       timestamp: new Date().toISOString(),
     },
-    indexes: pickGroup(quotes, ['SPY', 'QQQ', 'DIA', 'IWM']),
+    indexes: pickGroup(quotes, [
+      // US
+      'SPY', 'QQQ', 'DIA', 'IWM',
+      // CN/HK
+      '^SSEC', '000300.SS', '000905.SS', '399001.SZ', '399006.SZ', '000016.SS', '^HSI'
+    ]),
     rates: pickGroup(quotes, ['TLT', 'HYG', 'LQD']),
     commodities: pickGroup(quotes, ['GC=F', 'SI=F', 'CL=F', 'BZ=F', 'NG=F']),
     crypto: pickGroup(quotes, ['BTC-USD', 'ETH-USD']),
@@ -126,5 +144,7 @@ export async function collect() {
 }
 
 function pickGroup(quotes, symbols) {
-  return symbols.map(s => quotes[s]).filter(Boolean);
+  return symbols
+    .map(s => quotes[s])
+    .filter(q => q && !q.error && q.price != null);
 }
