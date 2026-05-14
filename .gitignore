@@ -3,6 +3,7 @@ node_modules/
 
 # Environment (contains API keys)
 .env
+.deploy-webhook.env
 apis/.env
 
 # Runtime data

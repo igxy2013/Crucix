@@ -43,10 +43,21 @@ import { briefing as space } from './sources/space.mjs';
 // === Tier 5: Live Market Data ===
 import { briefing as yfinance } from './sources/yfinance.mjs';
 
+const SOURCE_TIMEOUT_MS = parseInt(process.env.SOURCE_TIMEOUT_MS || '25000', 10);
+
+function withTimeout(promise, timeoutMs, name) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
+    }),
+  ]);
+}
+
 export async function runSource(name, fn, ...args) {
   const start = Date.now();
   try {
-    const data = await fn(...args);
+    const data = await withTimeout(fn(...args), SOURCE_TIMEOUT_MS, name);
     return { name, status: 'ok', durationMs: Date.now() - start, data };
   } catch (e) {
     return { name, status: 'error', durationMs: Date.now() - start, error: e.message };
