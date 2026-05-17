@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>全球信息中央情报系统</title>
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
@@ -35,7 +36,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--s
 .logo-ring::before{content:'';position:absolute;inset:-8px;border:1px solid var(--border);border-radius:50%;border-top-color:var(--accent);animation:spin 2s linear infinite}
 .logo-ring::after{content:'';position:absolute;inset:-16px;border:1px solid rgba(100,240,200,0.06);border-radius:50%;border-bottom-color:rgba(100,240,200,0.15);animation:spin 3s linear infinite reverse}
 @keyframes spin{to{transform:rotate(360deg)}}
-.logo-text{font-family:var(--mono);font-size:18px;font-weight:700;letter-spacing:0.2em;color:var(--accent)}
+.logo-mark{width:74px;height:74px;display:block;filter:drop-shadow(0 0 18px rgba(100,240,200,0.32))}
 #bootLines{margin-top:32px;font-family:var(--mono);font-size:12px;color:var(--dim);text-align:left;line-height:2;min-width:340px;opacity:0}
 #bootLines .ok{color:var(--accent)}
 #bootLines .count{color:var(--accent);font-weight:600}
@@ -47,6 +48,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--s
 /* TOPBAR */
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border:1px solid var(--border);background:var(--panel);backdrop-filter:blur(20px);flex-wrap:wrap;gap:10px}
 .top-left{display:flex;align-items:center;gap:14px}
+.brand-lockup{display:flex;align-items:center;gap:10px;min-width:0}
+.brand-mark{width:34px;height:34px;display:block;filter:drop-shadow(0 0 10px rgba(100,240,200,0.22));flex:0 0 auto}
 .brand{font-family:var(--mono);font-weight:700;font-size:15px;letter-spacing:0.12em;text-transform:uppercase}
 .regime-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;font-family:var(--mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;border:1px solid rgba(255,95,99,0.3);color:#ffd8d9;background:rgba(255,95,99,0.08)}
 .regime-chip .blink{width:6px;height:6px;border-radius:50%;background:var(--danger);box-shadow:0 0 8px var(--danger);animation:pulse-blink 1.5s ease-in-out infinite}
@@ -293,7 +296,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--s
 </head>
 <body>
 <div id="boot">
-  <div class="logo-ring"><span class="logo-text">全球信息中央情报系统</span></div>
+  <div class="logo-ring"><img class="logo-mark" src="/logo.svg" alt="Crucix"></div>
   <div id="bootLines"></div>
   <div id="bootFinal">TERMINAL ACTIVE</div>
 </div>
@@ -539,7 +542,10 @@ function renderTopbar(){
   
   document.getElementById('topbar').innerHTML=`
     <div class="top-left">
-      <span class="brand">${t('BRAND')}</span>
+      <span class="brand-lockup">
+        <img class="brand-mark" src="/logo.svg" alt="">
+        <span class="brand">${t('BRAND')}</span>
+      </span>
       <span class="regime-chip"><span class="blink"></span>${t('REGIME_RISK')}</span>
     </div>
     <div class="top-center">
